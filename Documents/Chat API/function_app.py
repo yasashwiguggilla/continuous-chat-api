@@ -1,32 +1,37 @@
 import azure.functions as func
 import json
 import os
+from datetime import datetime, timezone
 
 from azure.storage.blob import BlobServiceClient
 from openai import OpenAI
 
+
+# ============================================================
+# FUNCTION APP
+# ============================================================
 
 app = func.FunctionApp(
     http_auth_level=func.AuthLevel.ANONYMOUS
 )
 
 
-# ==================================================
-# STUDENT PERFORMANCE - BLOB STORAGE
-# ==================================================
+# ============================================================
+# STUDENT STORAGE
+# ============================================================
 
-connection_string = os.environ["AzureWebJobsStorage"]
+student_connection_string = os.environ["AzureWebJobsStorage"]
 
-blob_service_client = BlobServiceClient.from_connection_string(
-    connection_string
+student_blob_service_client = BlobServiceClient.from_connection_string(
+    student_connection_string
 )
 
-student_container_client = blob_service_client.get_container_client(
-    "students"
+student_container_client = (
+    student_blob_service_client.get_container_client("students")
 )
 
-student_blob_client = student_container_client.get_blob_client(
-    "students.json"
+student_blob_client = (
+    student_container_client.get_blob_client("students.json")
 )
 
 
@@ -44,101 +49,48 @@ def write_students(students):
     )
 
 
-# ==================================================
-# POST - CREATE STUDENT
-# ==================================================
+# ============================================================
+# STUDENT APIs
+# ============================================================
 
-@app.route(route="students", methods=["POST"])
-def create_student(req: func.HttpRequest) -> func.HttpResponse:
-
-    try:
-        data = req.get_json()
-
-        students = read_students()
-
-        if students:
-            new_id = max(
-                student["id"] for student in students
-            ) + 1
-        else:
-            new_id = 1
-
-        student = {
-            "id": new_id,
-            "name": data["name"],
-            "age": data["age"],
-            "marks": data["marks"],
-            "attendance": data["attendance"]
-        }
-
-        students.append(student)
-
-        write_students(students)
-
-        return func.HttpResponse(
-            json.dumps({
-                "message": "Student created successfully",
-                "student": student
-            }),
-            status_code=201,
-            mimetype="application/json"
-        )
-
-    except Exception as e:
-        return func.HttpResponse(
-            json.dumps({
-                "error": str(e)
-            }),
-            status_code=400,
-            mimetype="application/json"
-        )
-
-
-# ==================================================
-# GET - GET ALL STUDENTS
-# ==================================================
-
-@app.route(route="students", methods=["GET"])
+@app.route(
+    route="students",
+    methods=["GET"]
+)
 def get_students(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
         students = read_students()
 
         return func.HttpResponse(
-            json.dumps({
-                "students": students
-            }),
+            json.dumps(students),
             status_code=200,
             mimetype="application/json"
         )
 
-    except Exception as e:
+    except Exception:
         return func.HttpResponse(
             json.dumps({
-                "error": str(e)
+                "error": "Unable to read students"
             }),
             status_code=500,
             mimetype="application/json"
         )
 
 
-# ==================================================
-# GET - GET STUDENT BY ID
-# ==================================================
-
-@app.route(route="students/{student_id}", methods=["GET"])
+@app.route(
+    route="students/{student_id}",
+    methods=["GET"]
+)
 def get_student(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
-        student_id = int(
-            req.route_params.get("student_id")
-        )
+        student_id = req.route_params.get("student_id")
 
         students = read_students()
 
         for student in students:
-
-            if student["id"] == student_id:
+            if str(student.get("id")) == str(student_id):
 
                 return func.HttpResponse(
                     json.dumps(student),
@@ -154,48 +106,79 @@ def get_student(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
-    except Exception as e:
+    except Exception:
         return func.HttpResponse(
             json.dumps({
-                "error": str(e)
+                "error": "Unable to retrieve student"
+            }),
+            status_code=500,
+            mimetype="application/json"
+        )
+
+
+@app.route(
+    route="students",
+    methods=["POST"]
+)
+def create_student(req: func.HttpRequest) -> func.HttpResponse:
+
+    try:
+        body = req.get_json()
+
+        students = read_students()
+
+        students.append(body)
+
+        write_students(students)
+
+        return func.HttpResponse(
+            json.dumps(body),
+            status_code=201,
+            mimetype="application/json"
+        )
+
+    except ValueError:
+        return func.HttpResponse(
+            json.dumps({
+                "error": "Invalid JSON"
             }),
             status_code=400,
             mimetype="application/json"
         )
 
+    except Exception:
+        return func.HttpResponse(
+            json.dumps({
+                "error": "Unable to create student"
+            }),
+            status_code=500,
+            mimetype="application/json"
+        )
 
-# ==================================================
-# PUT - UPDATE STUDENT
-# ==================================================
 
-@app.route(route="students/{student_id}", methods=["PUT"])
+@app.route(
+    route="students/{student_id}",
+    methods=["PUT"]
+)
 def update_student(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
-        student_id = int(
-            req.route_params.get("student_id")
-        )
+        student_id = req.route_params.get("student_id")
+
+        body = req.get_json()
 
         students = read_students()
 
-        data = req.get_json()
+        for index, student in enumerate(students):
 
-        for student in students:
+            if str(student.get("id")) == str(student_id):
 
-            if student["id"] == student_id:
-
-                student["name"] = data["name"]
-                student["age"] = data["age"]
-                student["marks"] = data["marks"]
-                student["attendance"] = data["attendance"]
+                students[index] = body
 
                 write_students(students)
 
                 return func.HttpResponse(
-                    json.dumps({
-                        "message": "Student updated successfully",
-                        "student": student
-                    }),
+                    json.dumps(body),
                     status_code=200,
                     mimetype="application/json"
                 )
@@ -208,42 +191,48 @@ def update_student(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
-    except Exception as e:
+    except ValueError:
         return func.HttpResponse(
             json.dumps({
-                "error": str(e)
+                "error": "Invalid JSON"
             }),
             status_code=400,
             mimetype="application/json"
         )
 
+    except Exception:
+        return func.HttpResponse(
+            json.dumps({
+                "error": "Unable to update student"
+            }),
+            status_code=500,
+            mimetype="application/json"
+        )
 
-# ==================================================
-# DELETE - DELETE STUDENT
-# ==================================================
 
-@app.route(route="students/{student_id}", methods=["DELETE"])
+@app.route(
+    route="students/{student_id}",
+    methods=["DELETE"]
+)
 def delete_student(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
-        student_id = int(
-            req.route_params.get("student_id")
-        )
+        student_id = req.route_params.get("student_id")
 
         students = read_students()
 
-        for student in students:
+        for index, student in enumerate(students):
 
-            if student["id"] == student_id:
+            if str(student.get("id")) == str(student_id):
 
-                students.remove(student)
+                deleted_student = students.pop(index)
 
                 write_students(students)
 
                 return func.HttpResponse(
                     json.dumps({
                         "message": "Student deleted successfully",
-                        "student": student
+                        "student": deleted_student
                     }),
                     status_code=200,
                     mimetype="application/json"
@@ -257,19 +246,19 @@ def delete_student(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
-    except Exception as e:
+    except Exception:
         return func.HttpResponse(
             json.dumps({
-                "error": str(e)
+                "error": "Unable to delete student"
             }),
-            status_code=400,
+            status_code=500,
             mimetype="application/json"
         )
 
 
-# ==================================================
-# GROQ AI CLIENT
-# ==================================================
+# ============================================================
+# GROQ CLIENT
+# ============================================================
 
 groq_client = OpenAI(
     api_key=os.environ["GROQ_API_KEY"],
@@ -277,9 +266,9 @@ groq_client = OpenAI(
 )
 
 
-# ==================================================
-# CHAT HISTORY - BLOB STORAGE
-# ==================================================
+# ============================================================
+# CHAT BLOB STORAGE
+# ============================================================
 
 chat_connection_string = os.environ[
     "CHAT_STORAGE_CONNECTION_STRING"
@@ -289,14 +278,10 @@ chat_blob_service_client = BlobServiceClient.from_connection_string(
     chat_connection_string
 )
 
-chat_container_client = chat_blob_service_client.get_container_client(
-    "chat-history"
+chat_container_client = (
+    chat_blob_service_client.get_container_client("chat-history")
 )
 
-
-# ==================================================
-# READ CHAT CONVERSATION
-# ==================================================
 
 def read_conversation(session_id):
 
@@ -310,16 +295,11 @@ def read_conversation(session_id):
         return json.loads(data)
 
     except Exception:
-
         return {
             "session_id": session_id,
             "messages": []
         }
 
-
-# ==================================================
-# SAVE CHAT CONVERSATION
-# ==================================================
 
 def save_conversation(session_id, conversation):
 
@@ -338,101 +318,213 @@ def save_conversation(session_id, conversation):
     )
 
 
-# ==================================================
-# POST - CONTINUOUS CHAT API
-# ==================================================
+# ============================================================
+# CONTINUOUS CHAT API
+# ============================================================
 
-@app.route(route="chat", methods=["POST"])
+@app.route(
+    route="chat",
+    methods=["POST"]
+)
 def chat(req: func.HttpRequest) -> func.HttpResponse:
+
+    # ========================================================
+    # REQUEST JSON VALIDATION
+    # ========================================================
+
+    try:
+        body = req.get_json()
+
+    except ValueError:
+        return func.HttpResponse(
+            json.dumps({
+                "error": "Request body must be valid JSON"
+            }),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    # ========================================================
+    # GET INPUTS
+    # ========================================================
+
+    session_id = body.get("session_id")
+    message = body.get("message")
+
+    # ========================================================
+    # SESSION ID VALIDATION
+    # ========================================================
+
+    if not session_id or not isinstance(session_id, str):
+        return func.HttpResponse(
+            json.dumps({
+                "error": "session_id is required and must be a string"
+            }),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    session_id = session_id.strip()
+
+    if not session_id:
+        return func.HttpResponse(
+            json.dumps({
+                "error": "session_id cannot be empty"
+            }),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    # ========================================================
+    # MESSAGE VALIDATION
+    # ========================================================
+
+    if not message or not isinstance(message, str):
+        return func.HttpResponse(
+            json.dumps({
+                "error": "message is required and must be a string"
+            }),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    message = message.strip()
+
+    if not message:
+        return func.HttpResponse(
+            json.dumps({
+                "error": "message cannot be empty"
+            }),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    # ========================================================
+    # MESSAGE LENGTH VALIDATION
+    # ========================================================
+
+    if len(message) > 4000:
+        return func.HttpResponse(
+            json.dumps({
+                "error": "message cannot exceed 4000 characters"
+            }),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    # ========================================================
+    # READ CONVERSATION FROM BLOB
+    # ========================================================
+
+    try:
+        conversation = read_conversation(session_id)
+
+    except Exception:
+        return func.HttpResponse(
+            json.dumps({
+                "error": "Unable to read conversation history from Blob Storage"
+            }),
+            status_code=500,
+            mimetype="application/json"
+        )
+
+    # ========================================================
+    # ADD USER MESSAGE
+    # ========================================================
+
+    conversation["messages"].append({
+        "role": "user",
+        "content": message,
+        "timestamp": datetime.now(
+            timezone.utc
+        ).isoformat()
+    })
+
+    # ========================================================
+    # KEEP COMPLETE HISTORY IN BLOB
+    #
+    # BUT SEND ONLY LATEST 20 MESSAGES TO GROQ
+    # ========================================================
+
+    recent_messages = conversation["messages"][-20:]
+
+    # ========================================================
+    # CALL GROQ
+    # ========================================================
 
     try:
 
-        # Get request body
-        body = req.get_json()
-
-        session_id = body.get("session_id")
-        message = body.get("message")
-
-        # Validate input
-        if not session_id or not message:
-
-            return func.HttpResponse(
-                json.dumps({
-                    "error": "session_id and message are required"
-                }),
-                status_code=400,
-                mimetype="application/json"
-            )
-
-        # ------------------------------------------
-        # Read previous conversation
-        # ------------------------------------------
-
-        conversation = read_conversation(
-            session_id
-        )
-
-        # ------------------------------------------
-        # Add user message
-        # ------------------------------------------
-
-        conversation["messages"].append({
-            "role": "user",
-            "content": message
-        })
-
-        # ------------------------------------------
-        # Send complete conversation to Groq
-        # ------------------------------------------
-
         response = groq_client.chat.completions.create(
             model="openai/gpt-oss-20b",
-            messages=conversation["messages"]
+            messages=[
+                {
+                    "role": msg["role"],
+                    "content": msg["content"]
+                }
+                for msg in recent_messages
+            ]
         )
 
-        # ------------------------------------------
-        # Get AI response
-        # ------------------------------------------
+    except Exception:
+        return func.HttpResponse(
+            json.dumps({
+                "error": "Unable to get response from AI service"
+            }),
+            status_code=502,
+            mimetype="application/json"
+        )
 
-        answer = response.choices[0].message.content
+    # ========================================================
+    # GET AI RESPONSE
+    # ========================================================
 
-        # ------------------------------------------
-        # Add AI response to history
-        # ------------------------------------------
+    answer = response.choices[0].message.content
 
-        conversation["messages"].append({
-            "role": "assistant",
-            "content": answer
-        })
+    # ========================================================
+    # ADD AI RESPONSE TO COMPLETE HISTORY
+    # ========================================================
 
-        # ------------------------------------------
-        # Save conversation to Blob
-        # ------------------------------------------
+    conversation["messages"].append({
+        "role": "assistant",
+        "content": answer,
+        "timestamp": datetime.now(
+            timezone.utc
+        ).isoformat()
+    })
+
+    # ========================================================
+    # SAVE COMPLETE CONVERSATION TO BLOB
+    # ========================================================
+
+    try:
 
         save_conversation(
             session_id,
             conversation
         )
 
-        # ------------------------------------------
-        # Return response
-        # ------------------------------------------
-
+    except Exception:
         return func.HttpResponse(
             json.dumps({
-                "session_id": session_id,
-                "response": answer
-            }),
-            status_code=200,
-            mimetype="application/json"
-        )
-
-    except Exception as e:
-
-        return func.HttpResponse(
-            json.dumps({
-                "error": str(e)
+                "error": "AI response generated, but conversation could not be saved"
             }),
             status_code=500,
             mimetype="application/json"
         )
+
+    # ========================================================
+    # SUCCESS RESPONSE
+    # ========================================================
+
+    return func.HttpResponse(
+        json.dumps({
+            "session_id": session_id,
+            "message": message,
+            "response": answer,
+            "timestamp": datetime.now(
+                timezone.utc
+            ).isoformat()
+        }),
+        status_code=200,
+        mimetype="application/json"
+    )
